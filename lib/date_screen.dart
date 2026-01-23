@@ -1,6 +1,11 @@
+import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/material.dart';
+
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 class DateScreen extends StatefulWidget {
   const DateScreen({super.key});
@@ -37,6 +42,9 @@ class _DateScreenState extends State<DateScreen> {
   static const int _datePartLen = 16;
   static const int _eventTagLen = 4;
 
+  // ✅ Validação: só pode gerar/exportar se tiver evento
+  bool get _eventoPreenchido => _eventoController.text.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -44,7 +52,11 @@ class _DateScreenState extends State<DateScreen> {
     _finalDate = DateTime.now();
     _initialTime = const TimeOfDay(hour: 0, minute: 0);
     _finalTime = const TimeOfDay(hour: 23, minute: 59);
-    _updateEncryptedData();
+
+    // Não gera automaticamente se o evento estiver vazio
+    _encryptedData = '';
+    _decodedInfo = '';
+    _error = '';
   }
 
   @override
@@ -68,9 +80,18 @@ class _DateScreenState extends State<DateScreen> {
     return '$dd-$mm-$yyyy $hh:$mi';
   }
 
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  String _sanitizeFileName(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return 'EVENTO';
+    return t.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  }
+
   // ======================= EVENT TAG (4 chars) =======================
-  /// TAG só pra diferenciar tokens do mesmo período com eventos diferentes.
-  /// 4 chars base36 => 36^4 = 1.679.616 combinações.
   int _eventTagValue(String eventName) {
     final normalized = eventName.trim().toUpperCase();
     if (normalized.isEmpty) return 0;
@@ -78,7 +99,6 @@ class _DateScreenState extends State<DateScreen> {
     final bytes = _utf8(normalized);
     final h = crypto.sha256.convert(bytes).bytes;
 
-    // 32 bits
     final v32 =
         ((h[0] & 0xFF) << 24) |
         ((h[1] & 0xFF) << 16) |
@@ -98,10 +118,19 @@ class _DateScreenState extends State<DateScreen> {
     _error = '';
     _decodedInfo = '';
 
+    // ✅ Validação: evento obrigatório
+    if (!_eventoPreenchido) {
+      _encryptedData = '';
+      _error = 'Preencha o Nome do Evento para gerar a licença.';
+      return;
+    }
+
     if (_initialDate == null ||
         _finalDate == null ||
         _initialTime == null ||
         _finalTime == null) {
+      _encryptedData = '';
+      _error = 'Selecione as datas e horários.';
       return;
     }
 
@@ -155,34 +184,26 @@ class _DateScreenState extends State<DateScreen> {
     final sm = startMinutes & 0xFFFFFFFF;
     final dm = durationMinutes & 0xFFFFF;
 
-    // payload 56 bits
     final payload56 =
         (BigInt.from(v) << 52) | (BigInt.from(sm) << 20) | BigInt.from(dm);
 
     final checksum = _checksum8(payload56);
     final full64 = (payload56 << 8) | BigInt.from(checksum);
 
-    // Criptografa 64-bit (datas)
     final encrypted64 = _xteaEncrypt64(full64, _secret);
 
-    // ✅ 16 chars para o bloco 64-bit criptografado
     final datePart = _toBase36Fixed(encrypted64, _datePartLen);
-
-    // ✅ 4 chars TAG do evento (não interfere na descriptografia)
     final eventTag = _eventTagChars(eventName);
 
-    return '$datePart$eventTag'; // total 20
+    return '$datePart$eventTag';
   }
 
-  /// Retorna (startLocal, endLocal)
-  /// ✅ Ignora TAG do evento (últimos 4 chars)
   (DateTime, DateTime) _decodeToken(String token) {
     if (token.length != _tokenLen) {
       throw Exception('Token precisa ter $_tokenLen caracteres.');
     }
 
     final datePart = token.substring(0, _datePartLen);
-    // final eventTag = token.substring(_datePartLen); // se quiser exibir, está aqui
 
     final encrypted64 = _fromBase36(datePart);
     final full64 = _xteaDecrypt64(encrypted64, _secret);
@@ -210,14 +231,13 @@ class _DateScreenState extends State<DateScreen> {
   }
 
   int _checksum8(BigInt payload56) {
-    // HMAC-SHA256 do payload56 (7 bytes) e pega 1 byte
     final bytes7 = _bigIntToBytes(payload56, 7);
     final key = crypto.sha256.convert(_utf8(_secret)).bytes;
     final h = crypto.Hmac(crypto.sha256, key).convert(bytes7).bytes;
     return h[0] & 0xFF;
   }
 
-  // ======================= XTEA 64-bit (FIX) =======================
+  // ======================= XTEA 64-bit =======================
   BigInt _xteaEncrypt64(BigInt value64, String secret) {
     final k = _keyTo4x32(secret);
 
@@ -271,7 +291,6 @@ class _DateScreenState extends State<DateScreen> {
   int _u32(int x) => x & 0xFFFFFFFF;
 
   List<int> _keyTo4x32(String secret) {
-    // Deriva 16 bytes via SHA256(secret) e usa os 16 primeiros
     final hash = crypto.sha256.convert(_utf8(secret)).bytes;
     final b = hash.sublist(0, 16);
 
@@ -283,22 +302,19 @@ class _DateScreenState extends State<DateScreen> {
   }
 
   int _bytesToU32(List<int> b, int off) {
-    // big-endian
     return ((b[off] & 0xFF) << 24) |
         ((b[off + 1] & 0xFF) << 16) |
         ((b[off + 2] & 0xFF) << 8) |
         (b[off + 3] & 0xFF);
   }
 
-  // ======================= BASE36 (MAIÚSCULO) =======================
+  // ======================= BASE36 =======================
   String _toBase36Fixed(BigInt value, int len) {
     if (value < BigInt.zero) throw Exception('Valor negativo.');
     BigInt n = value;
     final base = BigInt.from(36);
 
-    if (n == BigInt.zero) {
-      return _b36[0] * len;
-    }
+    if (n == BigInt.zero) return _b36[0] * len;
 
     final chars = <String>[];
     while (n > BigInt.zero) {
@@ -306,14 +322,9 @@ class _DateScreenState extends State<DateScreen> {
       chars.add(_b36[r]);
       n = n ~/ base;
     }
-
     final s = chars.reversed.join();
 
-    if (s.length > len) {
-      throw Exception(
-        'Base36 excedeu $len chars (aumente o tamanho do token).',
-      );
-    }
+    if (s.length > len) throw Exception('Base36 excedeu $len chars.');
     return (_b36[0] * (len - s.length)) + s;
   }
 
@@ -327,8 +338,6 @@ class _DateScreenState extends State<DateScreen> {
       if (idx < 0) throw Exception('Caractere inválido no token: ${up[i]}');
       n = (n * base) + BigInt.from(idx);
     }
-
-    // garante 64 bits no máximo
     return n & ((BigInt.one << 64) - BigInt.one);
   }
 
@@ -336,7 +345,6 @@ class _DateScreenState extends State<DateScreen> {
   List<int> _utf8(String s) => Uint8List.fromList(s.codeUnits);
 
   List<int> _bigIntToBytes(BigInt n, int length) {
-    // big-endian com tamanho fixo
     final out = List<int>.filled(length, 0);
     BigInt v = n;
     for (int i = length - 1; i >= 0; i--) {
@@ -357,7 +365,7 @@ class _DateScreenState extends State<DateScreen> {
     if (picked != null && picked != _initialDate) {
       setState(() {
         _initialDate = picked;
-        _updateEncryptedData();
+        if (_encryptedData.isNotEmpty) _updateEncryptedData();
       });
     }
   }
@@ -372,7 +380,7 @@ class _DateScreenState extends State<DateScreen> {
     if (picked != null && picked != _finalDate) {
       setState(() {
         _finalDate = picked;
-        _updateEncryptedData();
+        if (_encryptedData.isNotEmpty) _updateEncryptedData();
       });
     }
   }
@@ -385,7 +393,7 @@ class _DateScreenState extends State<DateScreen> {
     if (picked != null && picked != _initialTime) {
       setState(() {
         _initialTime = picked;
-        _updateEncryptedData();
+        if (_encryptedData.isNotEmpty) _updateEncryptedData();
       });
     }
   }
@@ -398,8 +406,112 @@ class _DateScreenState extends State<DateScreen> {
     if (picked != null && picked != _finalTime) {
       setState(() {
         _finalTime = picked;
-        _updateEncryptedData();
+        if (_encryptedData.isNotEmpty) _updateEncryptedData();
       });
+    }
+  }
+
+  // ======================= PERMISSION + PATH (Documentos/Licencas) =======================
+  Future<Directory> _getPublicDocumentsLicencasDir() async {
+    if (Platform.isAndroid) {
+      final perm = await Permission.manageExternalStorage.status;
+      if (!perm.isGranted) {
+        final req = await Permission.manageExternalStorage.request();
+        if (!req.isGranted) {
+          if (req.isPermanentlyDenied) {
+            throw Exception(
+              'Permissão negada permanentemente. Abra as configurações do app e permita "Acesso a todos os arquivos".',
+            );
+          }
+          throw Exception('Permissão para acessar arquivos (MANAGE) negada.');
+        }
+      }
+
+      final dir = Directory('/storage/emulated/0/Documents/Licencas');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir;
+    }
+
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory('${base.path}/Licencas');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  // ======================= EXPORT TO PDF (QRCode) =======================
+  Future<void> _exportToPDF() async {
+    setState(() => _error = '');
+
+    // ✅ Bloqueia exportação se evento vazio
+    if (!_eventoPreenchido) {
+      setState(() => _error = 'Preencha o Nome do Evento para exportar.');
+      return;
+    }
+
+    if (_encryptedData.isEmpty) {
+      setState(() => _error = 'Gere o token antes de exportar.');
+      return;
+    }
+
+    try {
+      final licencasDir = await _getPublicDocumentsLicencasDir();
+
+      final evento = _sanitizeFileName(_eventoController.text);
+      final now = DateTime.now();
+      final ts =
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+
+      final fileName = 'LICENCA_${evento}_$ts.pdf';
+      final file = File('${licencasDir.path}/$fileName');
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                pw.Text(
+                  'LICENÇA DE EVENTO',
+                  style: pw.TextStyle(
+                    fontSize: 22,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 16),
+                pw.Text(
+                  'EVENTO: ${_eventoController.text.trim().toUpperCase()}',
+                  style: const pw.TextStyle(fontSize: 14),
+                ),
+                pw.SizedBox(height: 10),
+                pw.Text(_decodedInfo, style: const pw.TextStyle(fontSize: 12)),
+                pw.SizedBox(height: 18),
+                pw.BarcodeWidget(
+                  barcode: pw.Barcode.qrCode(),
+                  data: _encryptedData,
+                  width: 220,
+                  height: 220,
+                ),
+                pw.SizedBox(height: 14),
+                pw.Text(
+                  'TOKEN: $_encryptedData',
+                  style: pw.TextStyle(
+                    fontSize: 11,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      await file.writeAsBytes(await pdf.save(), flush: true);
+
+      _showSnack('PDF salvo em: ${file.path}');
+      setState(() => _error = 'PDF salvo em: ${file.path}');
+    } catch (e) {
+      setState(() => _error = 'Erro ao exportar PDF: $e');
     }
   }
 
@@ -433,6 +545,10 @@ class _DateScreenState extends State<DateScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool canGenerate =
+        _eventoPreenchido; // ✅ só gera se evento preenchido
+    final bool canExport = _eventoPreenchido && _encryptedData.isNotEmpty;
+
     return Scaffold(
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -474,7 +590,6 @@ class _DateScreenState extends State<DateScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // ✅ Nome do Evento (acima das datas)
                 TextField(
                   controller: _eventoController,
                   textCapitalization: TextCapitalization.characters,
@@ -482,7 +597,7 @@ class _DateScreenState extends State<DateScreen> {
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: Colors.white,
-                    labelText: 'Nome do Evento',
+                    labelText: 'Nome do Evento *',
                     hintText: 'Digite o nome do evento',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -492,9 +607,19 @@ class _DateScreenState extends State<DateScreen> {
                       borderSide: BorderSide(color: Colors.grey.shade400),
                     ),
                   ),
-                  onChanged: (_) => setState(() {
-                    _updateEncryptedData();
-                  }),
+                  onChanged: (_) {
+                    setState(() {
+                      // Se limpar o evento, limpa token/decodificado
+                      if (!_eventoPreenchido) {
+                        _encryptedData = '';
+                        _decodedInfo = '';
+                      } else {
+                        // se já tinha token, atualiza para refletir o evento
+                        if (_encryptedData.isNotEmpty) _updateEncryptedData();
+                      }
+                      _error = '';
+                    });
+                  },
                 ),
 
                 const SizedBox(height: 12),
@@ -614,7 +739,6 @@ class _DateScreenState extends State<DateScreen> {
 
                 const SizedBox(height: 12),
 
-                // ✅ Token e Decodificado lado a lado mantendo proporções
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -651,28 +775,52 @@ class _DateScreenState extends State<DateScreen> {
 
                 const SizedBox(height: 12),
 
-                // ✅ Botão abaixo dos campos Token/Decodificado
-                ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      _updateEncryptedData();
-                    });
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueAccent,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 32,
-                      vertical: 16,
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: canGenerate
+                            ? () => setState(_updateEncryptedData)
+                            : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueAccent,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 16,
+                          ),
+                        ),
+                        child: const Text(
+                          'Gerar Código',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Gerar Código',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: canExport ? _exportToPDF : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 16,
+                          ),
+                        ),
+                        child: const Text(
+                          'Exportar QRCode',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
 
                 const SizedBox(height: 12),
