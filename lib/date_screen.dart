@@ -154,7 +154,7 @@ class _DateScreenState extends State<DateScreen> {
 
       final decoded = _decodeToken(token);
       _decodedInfo =
-          'Início: ${_fmtDateTimeLocal(decoded.$1)} / Fim: ${_fmtDateTimeLocal(decoded.$2)}';
+          'Data Inicial: ${_fmtDateTimeLocal(decoded.$1)}\nData Final: ${_fmtDateTimeLocal(decoded.$2)}';
     } catch (e) {
       _encryptedData = '';
       _decodedInfo = '';
@@ -526,7 +526,7 @@ class _DateScreenState extends State<DateScreen> {
                   style: const pw.TextStyle(fontSize: 14),
                 ),
                 pw.SizedBox(height: 10),
-                pw.Text(_decodedInfo, style: const pw.TextStyle(fontSize: 16)),
+                pw.Text(_decodedInfo, style: const pw.TextStyle(fontSize: 12)),
                 pw.SizedBox(height: 18),
                 pw.BarcodeWidget(
                   barcode: pw.Barcode.qrCode(),
@@ -623,19 +623,6 @@ class _DateScreenState extends State<DateScreen> {
         child: AppBar(
           title: const Text('Licença - Seleção de Datas'),
           backgroundColor: Colors.blueAccent,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.list),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LicensesScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(2.0),
             child: Container(color: Colors.white, height: 2.0),
@@ -838,7 +825,7 @@ class _DateScreenState extends State<DateScreen> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: _buildInfoBox(
-                        title: 'Decodificado (prova de reversão)',
+                        title: 'Decodificado',
                         child: SelectableText(
                           _decodedInfo,
                           style: const TextStyle(

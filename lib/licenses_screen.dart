@@ -108,14 +108,6 @@ class _LicensesScreenState extends State<LicensesScreen> {
                   'Data Final: ${license['data_final']}',
                   style: const pw.TextStyle(fontSize: 12),
                 ),
-                pw.Text(
-                  'Horário Inicial: ${license['horario_inicial']}',
-                  style: const pw.TextStyle(fontSize: 12),
-                ),
-                pw.Text(
-                  'Horário Final: ${license['horario_final']}',
-                  style: const pw.TextStyle(fontSize: 12),
-                ),
                 pw.SizedBox(height: 18),
                 pw.BarcodeWidget(
                   barcode: pw.Barcode.qrCode(),
