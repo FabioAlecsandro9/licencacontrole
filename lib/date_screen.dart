@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'database_helper.dart';
+import 'licenses_screen.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 class DateScreen extends StatefulWidget {
@@ -53,7 +55,6 @@ class _DateScreenState extends State<DateScreen> {
     _initialTime = const TimeOfDay(hour: 0, minute: 0);
     _finalTime = const TimeOfDay(hour: 23, minute: 59);
 
-    // Não gera automaticamente se o evento estiver vazio
     _encryptedData = '';
     _decodedInfo = '';
     _error = '';
@@ -80,9 +81,14 @@ class _DateScreenState extends State<DateScreen> {
     return '$dd-$mm-$yyyy $hh:$mi';
   }
 
-  void _showSnack(String msg) {
+  void _showSnack(
+    String msg, {
+    Duration duration = const Duration(seconds: 4),
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), duration: duration));
   }
 
   String _sanitizeFileName(String s) {
@@ -114,11 +120,10 @@ class _DateScreenState extends State<DateScreen> {
   }
 
   // ======================= TOKEN CORE =======================
-  void _updateEncryptedData() {
+  Future<void> _updateEncryptedData() async {
     _error = '';
     _decodedInfo = '';
 
-    // ✅ Validação: evento obrigatório
     if (!_eventoPreenchido) {
       _encryptedData = '';
       _error = 'Preencha o Nome do Evento para gerar a licença.';
@@ -149,7 +154,7 @@ class _DateScreenState extends State<DateScreen> {
 
       final decoded = _decodeToken(token);
       _decodedInfo =
-          'Início: ${_fmtDateTimeLocal(decoded.$1)}\nFim:    ${_fmtDateTimeLocal(decoded.$2)}';
+          'Início: ${_fmtDateTimeLocal(decoded.$1)} / Fim: ${_fmtDateTimeLocal(decoded.$2)}';
     } catch (e) {
       _encryptedData = '';
       _decodedInfo = '';
@@ -438,11 +443,48 @@ class _DateScreenState extends State<DateScreen> {
     return dir;
   }
 
+  // ======================= SAVE TO DATABASE =======================
+  Future<void> _saveToDatabase() async {
+    setState(() => _error = '');
+
+    if (!_eventoPreenchido) {
+      setState(() => _error = 'Preencha o Nome do Evento para salvar.');
+      return;
+    }
+
+    if (_encryptedData.isEmpty) {
+      setState(() => _error = 'Gere o token antes de salvar.');
+      return;
+    }
+
+    try {
+      final dbHelper = DatabaseHelper();
+      final exists = await dbHelper.tokenExists(_encryptedData);
+      if (exists) {
+        _showSnack('Licença já existe no banco de dados.');
+        return;
+      }
+
+      final startLocal = _combineLocal(_initialDate!, _initialTime!);
+      final endLocal = _combineLocal(_finalDate!, _finalTime!);
+
+      await dbHelper.insertLicenca({
+        'nome_evento': _eventoController.text.trim(),
+        'data_inicial': _fmtDateTimeLocal(startLocal),
+        'data_final': _fmtDateTimeLocal(endLocal),
+        'token': _encryptedData,
+      });
+
+      _showSnack('Licença salva no banco de dados.');
+    } catch (e) {
+      setState(() => _error = 'Erro ao salvar no banco: $e');
+    }
+  }
+
   // ======================= EXPORT TO PDF (QRCode) =======================
   Future<void> _exportToPDF() async {
     setState(() => _error = '');
 
-    // ✅ Bloqueia exportação se evento vazio
     if (!_eventoPreenchido) {
       setState(() => _error = 'Preencha o Nome do Evento para exportar.');
       return;
@@ -484,7 +526,7 @@ class _DateScreenState extends State<DateScreen> {
                   style: const pw.TextStyle(fontSize: 14),
                 ),
                 pw.SizedBox(height: 10),
-                pw.Text(_decodedInfo, style: const pw.TextStyle(fontSize: 12)),
+                pw.Text(_decodedInfo, style: const pw.TextStyle(fontSize: 16)),
                 pw.SizedBox(height: 18),
                 pw.BarcodeWidget(
                   barcode: pw.Barcode.qrCode(),
@@ -543,10 +585,36 @@ class _DateScreenState extends State<DateScreen> {
     );
   }
 
+  // ✅ Helper para botão expandido
+  Widget _actionButton({
+    required String text,
+    required Color color,
+    required VoidCallback? onPressed,
+  }) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bool canGenerate =
-        _eventoPreenchido; // ✅ só gera se evento preenchido
+    final bool canGenerate = _eventoPreenchido;
     final bool canExport = _eventoPreenchido && _encryptedData.isNotEmpty;
 
     return Scaffold(
@@ -555,6 +623,19 @@ class _DateScreenState extends State<DateScreen> {
         child: AppBar(
           title: const Text('Licença - Seleção de Datas'),
           backgroundColor: Colors.blueAccent,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.list),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const LicensesScreen(),
+                  ),
+                );
+              },
+            ),
+          ],
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(2.0),
             child: Container(color: Colors.white, height: 2.0),
@@ -609,12 +690,10 @@ class _DateScreenState extends State<DateScreen> {
                   ),
                   onChanged: (_) {
                     setState(() {
-                      // Se limpar o evento, limpa token/decodificado
                       if (!_eventoPreenchido) {
                         _encryptedData = '';
                         _decodedInfo = '';
                       } else {
-                        // se já tinha token, atualiza para refletir o evento
                         if (_encryptedData.isNotEmpty) _updateEncryptedData();
                       }
                       _error = '';
@@ -766,6 +845,7 @@ class _DateScreenState extends State<DateScreen> {
                             fontSize: 14,
                             color: Colors.black87,
                             height: 1.3,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
@@ -775,50 +855,60 @@ class _DateScreenState extends State<DateScreen> {
 
                 const SizedBox(height: 12),
 
-                Row(
+                // ✅ Botões em DUAS LINHAS (2 por linha)
+                Column(
                   children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: canGenerate
-                            ? () => setState(_updateEncryptedData)
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueAccent,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 16,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _actionButton(
+                            text: 'Gerar Código',
+                            color: Colors.grey,
+                            onPressed: canGenerate
+                                ? () async {
+                                    setState(() {});
+                                    await _updateEncryptedData();
+                                    setState(() {});
+                                  }
+                                : null,
                           ),
                         ),
-                        child: const Text(
-                          'Gerar Código',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _actionButton(
+                            text: 'Exportar QRCode',
+                            color: Colors.black,
+                            onPressed: canExport ? _exportToPDF : null,
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: canExport ? _exportToPDF : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 16,
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _actionButton(
+                            text: 'Salvar',
+                            color: Colors.green,
+                            onPressed: canExport ? _saveToDatabase : null,
                           ),
                         ),
-                        child: const Text(
-                          'Exportar QRCode',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _actionButton(
+                            text: 'Visualizar Licenças',
+                            color: Colors.purple,
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const LicensesScreen(),
+                                ),
+                              );
+                            },
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   ],
                 ),
