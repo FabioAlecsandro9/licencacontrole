@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'database_helper.dart';
 import 'licenses_screen.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -22,12 +23,13 @@ class _DateScreenState extends State<DateScreen> {
   TimeOfDay? _initialTime;
   TimeOfDay? _finalTime;
 
-  // ✅ Nome do evento
+  // Nome do evento
   final TextEditingController _eventoController = TextEditingController();
 
   String _encryptedData = '';
   String _decodedInfo = '';
   String _error = '';
+  bool _showQrCode = false;
 
   // ======= CONFIG (mantenha esse segredo só no app / ofuscado no build) =======
   static const String _secret = 'mysecretkey12345'; // pode trocar
@@ -855,7 +857,12 @@ class _DateScreenState extends State<DateScreen> {
                                 ? () async {
                                     setState(() {});
                                     await _updateEncryptedData();
-                                    setState(() {});
+                                    setState(() {
+                                      if (_encryptedData.isNotEmpty &&
+                                          _error.isEmpty) {
+                                        _showQrCode = true;
+                                      }
+                                    });
                                   }
                                 : null,
                           ),
@@ -899,6 +906,53 @@ class _DateScreenState extends State<DateScreen> {
                     ),
                   ],
                 ),
+
+                const SizedBox(height: 12),
+
+                if (_showQrCode && _encryptedData.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(color: Colors.grey.shade400),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'QRCode',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border.all(color: Colors.black),
+                          ),
+                          child: QrImageView(
+                            data: _encryptedData,
+                            version: QrVersions.auto,
+                            size: 200.0,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _encryptedData,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
 
                 const SizedBox(height: 12),
 
