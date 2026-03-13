@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:qr_flutter/qr_flutter.dart';
 import 'database_helper.dart';
 
 class LicensesScreen extends StatefulWidget {
@@ -141,6 +142,33 @@ class _LicensesScreenState extends State<LicensesScreen> {
     }
   }
 
+  void _showQRDialog(String token) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('QR Code da Licença'),
+          content: SizedBox(
+            width: 250,
+            height: 250,
+            child: QrImageView(
+              data: token,
+              version: QrVersions.auto,
+              size: 250.0,
+              backgroundColor: Colors.white,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Fechar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -191,6 +219,13 @@ class _LicensesScreenState extends State<LicensesScreen> {
                               color: Colors.green,
                             ),
                             onPressed: () => _exportLicenseToPDF(license),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.qr_code,
+                              color: Colors.purple,
+                            ),
+                            onPressed: () => _showQRDialog(license['token']),
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
