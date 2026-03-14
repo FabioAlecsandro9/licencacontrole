@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:pdf/pdf.dart';
@@ -226,6 +227,20 @@ class _LicensesScreenState extends State<LicensesScreen> {
                               color: Colors.purple,
                             ),
                             onPressed: () => _showQRDialog(license['token']),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.content_copy,
+                              color: Colors.orange,
+                            ),
+                            onPressed: () {
+                              Clipboard.setData(
+                                ClipboardData(text: license['token']),
+                              );
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Token copiado!')),
+                              );
+                            },
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
