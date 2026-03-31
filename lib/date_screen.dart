@@ -9,6 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'database_helper.dart';
 import 'licenses_screen.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:flutter/services.dart';
 
 class DateScreen extends StatefulWidget {
   const DateScreen({super.key});
@@ -813,14 +814,41 @@ class _DateScreenState extends State<DateScreen> {
                     Expanded(
                       child: _buildInfoBox(
                         title: 'Token (20 caracteres)',
-                        child: SelectableText(
-                          _encryptedData,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Colors.black87,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SelectableText(
+                                _encryptedData,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.content_copy,
+                                color: Colors.blueAccent,
+                              ),
+                              tooltip: 'Copiar token',
+                              onPressed: _encryptedData.isEmpty
+                                  ? null
+                                  : () {
+                                      Clipboard.setData(
+                                        ClipboardData(text: _encryptedData),
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Token copiado!'),
+                                        ),
+                                      );
+                                    },
+                            ),
+                          ],
                         ),
                       ),
                     ),
