@@ -1,12 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'database_helper.dart';
+import '../utils/export_directory_helper.dart';
 
 class LicensesScreen extends StatefulWidget {
   const LicensesScreen({super.key});
@@ -55,16 +54,9 @@ class _LicensesScreenState extends State<LicensesScreen> {
           throw Exception('Permissão para acessar arquivos (MANAGE) negada.');
         }
       }
-
-      final dir = Directory('/storage/emulated/0/Documents/Licencas');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir;
     }
 
-    final base = await getApplicationDocumentsDirectory();
-    final dir = Directory('${base.path}/Licencas');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir;
+    return ExportDirectoryHelper.getLicencasDir();
   }
 
   Future<void> _exportLicenseToPDF(Map<String, dynamic> license) async {

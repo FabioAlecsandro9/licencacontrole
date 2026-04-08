@@ -3,13 +3,13 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'database_helper.dart';
 import 'licenses_screen.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/services.dart';
+import '../utils/export_directory_helper.dart';
 
 class DateScreen extends StatefulWidget {
   const DateScreen({super.key});
@@ -434,16 +434,9 @@ class _DateScreenState extends State<DateScreen> {
           throw Exception('Permissão para acessar arquivos (MANAGE) negada.');
         }
       }
-
-      final dir = Directory('/storage/emulated/0/Documents/Licencas');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir;
     }
 
-    final base = await getApplicationDocumentsDirectory();
-    final dir = Directory('${base.path}/Licencas');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir;
+    return ExportDirectoryHelper.getLicencasDir();
   }
 
   // ======================= SAVE TO DATABASE =======================
